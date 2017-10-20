@@ -39,7 +39,6 @@ from tensorflow.python.training import training
 import random
 import re
 from tensorflow.python.platform import gfile
-# import cv2
 
 
 def triplet_loss(anchor, positive, negative, alpha):
@@ -575,3 +574,24 @@ def write_arguments_to_file(args, filename):
     with open(filename, 'w') as f:
         for key, value in vars(args).iteritems():
             f.write('%s: %s\n' % (key, str(value)))
+
+
+# ------------------------------------------------------
+
+def get_dataset_from_difference_sources(paths, has_class_directories=True):
+    dataset = []
+    for path in paths.split(':'):
+        path_exp = os.path.expanduser(path)
+        classes = os.listdir(path_exp)
+        classes.sort()
+        nrof_classes = len(classes)
+        for i in range(nrof_classes):
+            class_name = classes[i]
+            source_list = os.listdir(os.path.join(path_exp, class_name))
+            image_paths = list()
+            for source in source_list:
+                facedir = os.path.join(path_exp, class_name, source)
+                image_paths += get_image_paths(facedir)
+            dataset.append(ImageClass(class_name, image_paths))
+
+    return dataset

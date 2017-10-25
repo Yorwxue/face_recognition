@@ -36,6 +36,9 @@ from scipy import misc
 import align.detect_face
 import facenet
 import os
+import cv2
+import time
+from PIL import Image, ImageDraw, ImageFont
 
 args_margin = 32
 args_image_size = 160
@@ -54,7 +57,7 @@ factor = 0.709  # scale factor
 
 def img_read(image_path):
     try:
-        img = misc.imread(image_path)
+        img = cv2.imread(image_path)
     except (IOError, ValueError, IndexError) as e:
         errorMessage = '{}: {}'.format(image_path, e)
         print(errorMessage)
@@ -93,6 +96,15 @@ def get_face_vec(face_imgs):
             emb_array = sess.run(embeddings, feed_dict=feed_dict)
 
             return emb_array
+
+
+def get_image_paths_and_labels(dataset):
+    image_paths_flat = list()
+    labels_flat = list()
+    for i in range(len(dataset)):
+        image_paths_flat += dataset[i].image_paths
+        labels_flat += [i] * len(dataset[i].image_paths)
+    return image_paths_flat, labels_flat
 
 
 def get_face_img(img_paths):
@@ -137,33 +149,6 @@ def get_face_img(img_paths):
     return face_closeups, face_source, face_locations
 
 
-def prewhiten(x):
-    mean = np.mean(x)
-    std = np.std(x)
-    std_adj = np.maximum(std, 1.0/np.sqrt(x.size))
-    y = np.multiply(np.subtract(x, mean), 1/std_adj)
-    return y
-
-
-def crop(image, random_crop, image_size):
-    if image.shape[1]>image_size:
-        sz1 = int(image.shape[1]//2)
-        sz2 = int(image_size//2)
-        if random_crop:
-            diff = sz1-sz2
-            (h, v) = (np.random.randint(-diff, diff+1), np.random.randint(-diff, diff+1))
-        else:
-            (h, v) = (0, 0)
-        image = image[(sz1-sz2+v):(sz1+sz2+v), (sz1-sz2+h):(sz1+sz2+h), :]
-    return image
-
-
-def flip(image, random_flip):
-    if random_flip and np.random.choice([True, False]):
-        image = np.fliplr(image)
-    return image
-
-
 def face_process(face_closeups, do_random_crop, do_random_flip, image_size, do_prewhiten=True):
     # input a list of faces
     # return a nd-array of pre-processed faces
@@ -173,22 +158,15 @@ def face_process(face_closeups, do_random_crop, do_random_flip, image_size, do_p
         img = face_closeups[i]
         try:
             if img.ndim == 2:
-                img = to_rgb(img)
+                img = facenet.to_rgb(img)
             if do_prewhiten:
-                img = prewhiten(img)
-            img = crop(img, do_random_crop, image_size)
-            img = flip(img, do_random_flip)
+                img = facenet.prewhiten(img)
+            img = facenet.crop(img, do_random_crop, image_size)
+            img = facenet.flip(img, do_random_flip)
             images[i, :, :, :] = img
         except:
             continue
     return images
-
-
-def to_rgb(img):
-    w, h = img.shape
-    ret = np.empty((w, h, 3), dtype=np.uint8)
-    ret[:, :, 0] = ret[:, :, 1] = ret[:, :, 2] = img
-    return ret
 
 
 def cal_euclidean(x, y):
@@ -199,62 +177,133 @@ def cal_euclidean(x, y):
     dist = np.sum(np.square(diff), 1)
     return dist
 
-# ----------------
 
-img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/character/'
-# person1 = '習近平'
-# person2 = '蔡英文'
+# -----------------------------------------------------------------------------------------------------------------------
 
-update = False
-if update or \
-        not os.path.exists('face_vectors.npy') or \
-        not os.path.exists('face_source.npy') or \
-        not os.path.exists('face_locations.npy'):
-    people_list = os.listdir(img_path)
+# find the three most likely person
+def faceDB(img_path, update=False):
+    if update or \
+            not os.path.exists('face_vectors.npy') or \
+            not os.path.exists('face_source.npy') or \
+            not os.path.exists('face_locations.npy'):
+        people_list = os.listdir(img_path)
 
-    print('preparing image paths')
-    image_paths = list()
-    for person in people_list:
-        image_paths += [img_path+'%s/' % (person) + image for image in os.listdir(img_path+'%s/' % person)]
+        print('preparing image paths')
+        image_paths = list()
+        for person in people_list:
+            image_paths += [img_path+'%s/' % (person) + image for image in os.listdir(img_path+'%s/' % person)]
 
-    print('loading images')
-    face_closeups, face_source, face_locations = get_face_img(image_paths)
+        print('loading images')
+        face_closeups, face_source, face_locations = get_face_img(image_paths)
 
-    print('processing images')
-    processed_face_closeups = face_process(face_closeups, False, False, args_image_size)
+        print('processing images')
+        processed_face_closeups = face_process(face_closeups, False, False, args_image_size)
 
-    print('calculate face vectors')
-    face_vectors = get_face_vec(processed_face_closeups)
+        print('calculate face vectors')
+        face_vectors = get_face_vec(processed_face_closeups)
 
-    np.save('face_vectors.npy', face_vectors)
-    np.save('face_source.npy', face_source)
-    np.save('face_locations.npy', face_locations)
+        np.save('face_vectors.npy', face_vectors)
+        np.save('face_source.npy', face_source)
+        np.save('face_locations.npy', face_locations)
 
-    # show
-    # for count in range(len(face_vectors)):
-    #     misc.imshow(face_closeups[count])
-    #     misc.imshow(misc.imread(face_source[count]))
-    #     bb = face_locations[count]
-    #     misc.imshow(misc.imread(face_source[count])[bb[1]:bb[3], bb[0]:bb[2], :])
-else:
-    face_vectors = np.load('face_vectors.npy')
-    face_source = np.load('face_source.npy')
-    face_locations = np.load('face_locations.npy')
+        # show
+        # for count in range(len(face_vectors)):
+        #     misc.imshow(face_closeups[count])
+        #     misc.imshow(misc.imread(face_source[count]))
+        #     bb = face_locations[count]
+        #     misc.imshow(misc.imread(face_source[count])[bb[1]:bb[3], bb[0]:bb[2], :])
+    else:
+        face_vectors = np.load('face_vectors.npy')
+        face_source = np.load('face_source.npy')
+        face_locations = np.load('face_locations.npy')
 
-query_img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset//unknown_people/1111111.jpg'
-misc.imshow(misc.imread(query_img_path))
-query_face_closeup, _, _ = get_face_img(np.atleast_1d(query_img_path))
-query_processed_face_ = face_process(query_face_closeup, False, False, args_image_size)
-query_face_vector = get_face_vec(query_processed_face_)
+    return face_vectors, face_source, face_locations
 
-dist = cal_euclidean(query_face_vector, face_vectors)
-indices = dist.argsort()[:3]  # find the indices of the 3 lower number
-for index in indices:
-    misc.imshow(misc.imread(face_source[index]))
-    # misc.imshow(np.array(face_closeups[index]))
+# ----------------------------------------------------------------------------------------
 
 
-# ---------- testing ---------
+def faceRecognition(known_img_path, query_img_path):
+    query_face_closeup, query_face_source, query_face_locations = get_face_img(np.atleast_1d(query_img_path))
+
+    query_processed_face_ = face_process(query_face_closeup, False, False, args_image_size)
+    query_face_vector = get_face_vec(query_processed_face_)
+
+    face_vectors, face_source, _ = faceDB(known_img_path, update=False)
+
+    faceInfo = list()
+
+    for face_no in range(len(query_face_vector)):
+        dist = cal_euclidean(query_face_vector[face_no], face_vectors)
+        # indices = dist.argsort()[:3]  # find the indices of the 3 lower number
+        index = dist.argsort()[:1]  # the most similar
+        person_name = str(face_source[index]).split('/')[-2]
+        faceInfo.append([query_face_source[face_no], query_face_locations[face_no], person_name])
+
+    return faceInfo
+
+
+def drawBoundaryBox(faceInfo):
+    # font style
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fontScale = 0.5
+    fontColor = (255, 255, 255)
+    lineType = 2
+
+    def puttext_in_chinese(img, text, location):
+        # cv2 to pil
+        cv2_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(cv2_img)
+
+        # text
+        draw = ImageDraw.Draw(pil_img)
+        font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
+        draw.text(location, text, (0, 0, 255), font=font)  # third parameter is color
+
+        # pil to cv2
+        cv2_text_im = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return cv2_text_im
+
+    imgList = list()
+    imgSource = ''
+
+    for face_no in range(len(faceInfo)):
+        face_source, face_locations, person_name = faceInfo[face_no]
+        if imgSource != face_source:
+            imgSource = face_source
+            if face_no != 0:
+                imgList.append(img)
+            img = cv2.imread(imgSource)
+
+        # draw boundary box
+        cv2.rectangle(img, (face_locations[0], face_locations[1]), (face_locations[2], face_locations[3]), (0, 255, 0), 2)
+        # cv2.putText(img, person_name, (face_locations[0], face_locations[3]), font, fontScale, fontColor, lineType)
+        img = puttext_in_chinese(img, person_name, (face_locations[0], face_locations[3]))
+
+        if face_no == len(faceInfo)-1:
+            imgList.append(img)
+
+    return imgList
+
+
+if __name__ == '__main__':
+    img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/mtcnnpy_160/known_mtcnnpy_160/'
+
+    queryList = list()
+    # query_img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset//unknown_people/02586.jpg'
+    # queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/02586.jpg')
+    queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/125215.jpg')
+    beginTime = time.time()
+    faceInfo = faceRecognition(img_path, queryList)
+    print('%f' % (time.time()-beginTime))
+
+    imgList = drawBoundaryBox(faceInfo)
+    for img in imgList:
+        # show result
+        # img = cv2.resize(img, (800, 800), interpolation=cv2.INTER_CUBIC)
+        cv2.imshow('contours', img)
+        cv2.waitKey(10000)
+
+# ---------- testing accuracy---------
 # import pickle
 # classifier_filename_exp = os.path.expanduser('/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src/pre_train_models/my_classifier.pkl')
 # print('Testing classifier')

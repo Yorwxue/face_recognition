@@ -21,6 +21,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# note
+# export PYTHONPATH=/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src
+
+# 1. align
+# for N in {1..4}; do python3.6 src/align/align_dataset_mtcnn.py {raw images directory} {output directory} --image_size 160 --margin 32 --random_order --gpu_memory_fraction 0.25 & done
+# ex:
+# for N in {1..4}; do python3.6 src/align/align_dataset_mtcnn.py /media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/known_people_manually/ /media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/mtcnnpy_160/known_mtcnnpy_160/ --image_size 160 --margin 32 --random_order --gpu_memory_fraction 0.25 & done
+
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -55,7 +64,8 @@ def main(args):
     # get_dataset is a function which return a list of special objects
     # this kind of object has two element, one is the class name,
     # and the other is the path of all entry belonging to this class
-    dataset = facenet.get_dataset(args.input_dir)
+    # dataset = facenet.get_dataset(args.input_dir)
+    dataset = facenet.get_dataset_from_difference_sources(args.input_dir)
     
     print('Creating networks and loading parameters')
     

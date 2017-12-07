@@ -46,6 +46,8 @@ args_batch_size = 1000
 args_seed = 666
 args_use_split_dataset = False
 
+face_threshold = 0.5
+
 # get the path of this program file
 src_path, _ = os.path.split(os.path.realpath(__file__))
 args_model = os.path.expanduser(src_path + '/pre_train_models/20170512-110547.pb')
@@ -181,11 +183,17 @@ def cal_euclidean(x, y):
 # -----------------------------------------------------------------------------------------------------------------------
 
 # find the three most likely person
-def faceDB(img_path, update=False):
+def faceDB(db_name, img_path=None, update=False):
+    code_path = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(code_path, db_name)):
+        os.mkdir(os.path.join(code_path, db_name))
+    if update and img_path==None:
+        print('if update flag is true, img_path can not be None')
+        exit()
     if update or \
-            not os.path.exists('face_vectors.npy') or \
-            not os.path.exists('face_source.npy') or \
-            not os.path.exists('face_locations.npy'):
+            not os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) or \
+            not os.path.exists(os.path.join(code_path, db_name, 'face_source.npy')) or \
+            not os.path.exists(os.path.join(code_path, db_name, 'face_locations.npy')):
         people_list = os.listdir(img_path)
 
         print('preparing image paths')
@@ -202,9 +210,9 @@ def faceDB(img_path, update=False):
         print('calculate face vectors')
         face_vectors = get_face_vec(processed_face_closeups)
 
-        np.save('face_vectors.npy', face_vectors)
-        np.save('face_source.npy', face_source)
-        np.save('face_locations.npy', face_locations)
+        np.save(os.path.join(code_path, db_name, 'face_vectors.npy'), face_vectors)
+        np.save(os.path.join(code_path, db_name, 'face_source.npy'), face_source)
+        np.save(os.path.join(code_path, db_name, 'face_locations.npy'), face_locations)
 
         # show
         # for count in range(len(face_vectors)):
@@ -213,95 +221,163 @@ def faceDB(img_path, update=False):
         #     bb = face_locations[count]
         #     misc.imshow(misc.imread(face_source[count])[bb[1]:bb[3], bb[0]:bb[2], :])
     else:
-        face_vectors = np.load('face_vectors.npy')
-        face_source = np.load('face_source.npy')
-        face_locations = np.load('face_locations.npy')
+        face_vectors = np.load(os.path.join(code_path, db_name, 'face_vectors.npy'))
+        face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy'))
+        face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy'))
 
     return face_vectors, face_source, face_locations
 
 # ----------------------------------------------------------------------------------------
 
 
-def faceRecognition(known_img_path, query_img_path):
+def faceRecognition_of_Original_Img(query_img_path, db_name, known_img_path=None, update=False):
     query_face_closeup, query_face_source, query_face_locations = get_face_img(np.atleast_1d(query_img_path))
 
     query_processed_face_ = face_process(query_face_closeup, False, False, args_image_size)
     query_face_vector = get_face_vec(query_processed_face_)
 
-    face_vectors, face_source, _ = faceDB(known_img_path, update=False)
+    face_vectors, face_source, _ = faceDB(db_name, img_path=known_img_path, update=update)
 
-    faceInfo = list()
+    source_list = list()
+    location_list = list()
+    name_list = list()
+    distance_list = list()
 
     for face_no in range(len(query_face_vector)):
         dist = cal_euclidean(query_face_vector[face_no], face_vectors)
         # indices = dist.argsort()[:3]  # find the indices of the 3 lower number
         index = dist.argsort()[:1]  # the most similar
-        person_name = str(face_source[index]).split('/')[-2]
-        faceInfo.append([query_face_source[face_no], query_face_locations[face_no], person_name])
 
-    return faceInfo
+        # threshold checking
+        distance = dist[index]
+        if distance > face_threshold:
+            person_name = 'unknow'
+        else:
+            person_name = str(face_source[index]).split('/')[-2]
+        # faceInfo.append([query_face_source[face_no], query_face_locations[face_no], person_name, distance])
+        source_list.append(query_face_source[face_no])
+        location_list.append(query_face_locations[face_no])
+        name_list.append(person_name)
+        distance_list.append(distance)
+
+    return source_list, location_list, name_list, distance_list
 
 
-def drawBoundaryBox(faceInfo):
+def realTimeFaceRecognition(query_vector_list, db, known_img_path=None, update=False):
+    face_vectors, face_source, _ = db
+
+    person_name_list = list()
+    distance_list = list()
+
+    for face_no in range(len(query_vector_list)):
+        dist = cal_euclidean(query_vector_list[face_no], face_vectors)
+        # indices = dist.argsort()[:3]  # find the indices of the 3 lower number
+        index = dist.argsort()[:1]  # the most similar
+
+        # threshold checking
+        distance = dist[index]
+        if distance > face_threshold:
+            person_name = 'unknow'
+            # distance = '--'
+        else:
+            person_name = str(face_source[index]).split('/')[-2]
+        # faceInfo.append([person_name, distance])
+        person_name_list.append(person_name)
+        distance_list.append(distance)
+
+    return person_name_list, distance_list
+
+
+def puttext_in_chinese(img, text, location):
+    # cv2 to pil
+    cv2_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(cv2_img)
+
+    # text
+    draw = ImageDraw.Draw(pil_img)
+    font = ImageFont.truetype("simhei.ttf", 10, encoding="utf-8")
+    draw.text(location, text, (255, 0, 0), font=font)  # third parameter is color
+
+    # pil to cv2
+    cv2_text_im = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    return cv2_text_im
+
+
+def drawBoundaryBox(face_sources, face_locations, person_names, distances):
     # font style
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    fontScale = 0.5
-    fontColor = (255, 255, 255)
-    lineType = 2
-
-    def puttext_in_chinese(img, text, location):
-        # cv2 to pil
-        cv2_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(cv2_img)
-
-        # text
-        draw = ImageDraw.Draw(pil_img)
-        font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
-        draw.text(location, text, (0, 0, 255), font=font)  # third parameter is color
-
-        # pil to cv2
-        cv2_text_im = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-        return cv2_text_im
+    # font = cv2.FONT_HERSHEY_SIMPLEX
+    # fontScale = 0.5
+    # fontColor = (255, 255, 255)
+    # lineType = 2
 
     imgList = list()
-    imgSource = ''
+    face_counter_for_each_image = 0
+    for face_no in range(len(person_names)):
+        source = face_sources[face_no]
+        location = face_locations[face_no]
+        name = person_names[face_no]
+        distance = distances[face_no]
 
-    for face_no in range(len(faceInfo)):
-        face_source, face_locations, person_name = faceInfo[face_no]
-        if imgSource != face_source:
-            imgSource = face_source
-            if face_no != 0:
-                imgList.append(img)
-            img = cv2.imread(imgSource)
+        if type(source) == np.ndarray:
+            img = source
+        else:
+            img = cv2.imread(source)
+
+        # check whether those faces are in the same image or not
+        try:
+            if not np.all(pre_img == img):
+                if face_counter_for_each_image > 0:
+                    imgList.append(marked_img)
+                    pre_img = img
+                    marked_img = img.copy()
+                face_counter_for_each_image = 0
+        except:
+            pre_img = img
+            marked_img = img.copy()
 
         # draw boundary box
-        cv2.rectangle(img, (face_locations[0], face_locations[1]), (face_locations[2], face_locations[3]), (0, 255, 0), 2)
-        # cv2.putText(img, person_name, (face_locations[0], face_locations[3]), font, fontScale, fontColor, lineType)
-        img = puttext_in_chinese(img, person_name, (face_locations[0], face_locations[3]))
+        cv2.rectangle(marked_img, (location[0], location[1]), (location[2], location[3]), (0, 255, 0), 2)
+        # cv2.putText(img, '%s: %.3f' % (name, distance), (location[0], location[3]), font, fontScale, fontColor, lineType)
+        marked_img = puttext_in_chinese(marked_img, '%s: %.3f' % (name, distance), (location[0], location[3]))
 
-        if face_no == len(faceInfo)-1:
-            imgList.append(img)
+        if face_no == len(person_names)-1:
+            imgList.append(marked_img)
+
+        face_counter_for_each_image += 1
 
     return imgList
 
 
+"""
 if __name__ == '__main__':
+    # update database
+    # img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/mtcnnpy_160/pic_of_sir_mtcnnpy_160/'
+    # faceDB(img_path, 'sir_db', update=True)
+
+    # mark faces in photo
     img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/mtcnnpy_160/known_mtcnnpy_160/'
+    db_name = 'sir_db'
 
     queryList = list()
     # query_img_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset//unknown_people/02586.jpg'
-    # queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/02586.jpg')
-    queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/125215.jpg')
+    # queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/20170322-NCSIST-contract01.jpg')
+    # queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/125215.jpg')
+    # queryList.append('/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/95759.jpg')
+    queryList.append(
+        '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/face_recognition_dataset/unknown_people/2017081822495149947.jpeg')
+
     beginTime = time.time()
-    faceInfo = faceRecognition(img_path, queryList)
+    face_sources, face_locations, person_names, distances = faceRecognition_of_Original_Img(queryList, db_name, known_img_path=img_path, update=False)
+
     print('%f' % (time.time()-beginTime))
 
-    imgList = drawBoundaryBox(faceInfo)
+    imgList = drawBoundaryBox(face_sources, face_locations, person_names, distances)
     for img in imgList:
         # show result
         # img = cv2.resize(img, (800, 800), interpolation=cv2.INTER_CUBIC)
         cv2.imshow('contours', img)
         cv2.waitKey(10000)
+"""
 
 # ---------- testing accuracy---------
 # import pickle

@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# note
+# Note
 # export PYTHONPATH=/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src
 
 # 1. align
@@ -35,6 +35,7 @@ from __future__ import division
 from __future__ import print_function
 
 from scipy import misc
+# import cv2
 import sys
 import os
 import argparse
@@ -64,8 +65,8 @@ def main(args):
     # get_dataset is a function which return a list of special objects
     # this kind of object has two element, one is the class name,
     # and the other is the path of all entry belonging to this class
-    # dataset = facenet.get_dataset(args.input_dir)
-    dataset = facenet.get_dataset_from_difference_sources(args.input_dir)
+    dataset = facenet.get_dataset(args.input_dir)
+    # dataset = facenet.get_dataset_from_difference_sources(args.input_dir)
     
     print('Creating networks and loading parameters')
     
@@ -102,6 +103,7 @@ def main(args):
                 if not os.path.exists(output_filename):
                     try:
                         img = misc.imread(image_path)
+                        # img = cv2.imread(image_path)
                     except (IOError, ValueError, IndexError) as e:
                         errorMessage = '{}: {}'.format(image_path, e)
                         print(errorMessage)

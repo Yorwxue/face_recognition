@@ -28,17 +28,20 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-from subprocess import Popen, PIPE
-import tensorflow as tf
-from tensorflow.python.framework import ops
-import numpy as np
-from scipy import misc
-from sklearn.model_selection import KFold
-from scipy import interpolate
-from tensorflow.python.training import training
 import random
 import re
+from subprocess import Popen, PIPE
+
+import cv2
+import numpy as np
+import tensorflow as tf
+from PIL import Image, ImageDraw, ImageFont
+from scipy import interpolate
+from scipy import misc
+from sklearn.model_selection import KFold
+from tensorflow.python.framework import ops
 from tensorflow.python.platform import gfile
+from tensorflow.python.training import training
 
 
 def triplet_loss(anchor, positive, negative, alpha):
@@ -552,7 +555,7 @@ def list_variables(filename):
     return names
 
 
-def put_images_on_grid(images, shape=(16,8)):
+def put_images_on_grid(images, shape=(16, 8)):
     nrof_images = images.shape[0]
     img_size = images.shape[1]
     bw = 3
@@ -577,6 +580,16 @@ def write_arguments_to_file(args, filename):
 
 
 # ------------------------------------------------------
+import config
+
+args_model = config.args_model
+args_margin = config.args_margin
+args_image_size = config.args_image_size
+minsize = config.minsize  # minimum size of face
+threshold = config.threshold  # three steps's threshold
+factor = config.factor  # scale factor
+args_seed = config.args_seed
+
 
 def get_dataset_from_difference_sources(paths, has_class_directories=True):
     dataset = []
@@ -595,3 +608,257 @@ def get_dataset_from_difference_sources(paths, has_class_directories=True):
             dataset.append(ImageClass(class_name, image_paths))
 
     return dataset
+
+
+def get_face_vec(face_imgs):
+    # input a img of face closeup
+    with tf.Graph().as_default():
+        with tf.Session() as sess:
+            np.random.seed(seed=args_seed)
+
+            # Load the model
+            print('Loading feature extraction model')
+            load_model(args_model)
+
+            # Get input and output tensors
+            images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+            embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+            phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+            # embedding_size = embeddings.get_shape()[1]
+
+            # Run forward pass to calculate embeddings
+            print('Calculating features for images')
+            feed_dict = {images_placeholder: face_imgs, phase_train_placeholder: False}
+            emb_array = sess.run(embeddings, feed_dict=feed_dict)
+
+            return emb_array
+
+
+def img_read(image_path):
+    try:
+        image = cv2.imread(image_path)
+    except (IOError, ValueError, IndexError) as e:
+        errorMessage = '{}: {}'.format(image_path, e)
+        print(errorMessage)
+    else:
+        # make sure that all images are normal
+        # ----------------------------------------------
+        if image.ndim < 2:  # an normal image should has at least two dimension(width and high)
+            print('Unable to align "%s"' % image_path)
+            return
+        if image.ndim == 2:  # an image which has only one channel
+            img = to_rgb(image)
+            image = image[:, :, 0:3]
+        # ----------------------------------------------
+    return image
+
+
+def cal_euclidean(x, y):
+    # x, y must be matrices
+    x = np.atleast_2d(x)
+    y = np.atleast_2d(y)
+    diff = np.subtract(x, y)
+    dist = np.sum(np.square(diff), 1)
+    return dist
+
+
+from align import detect_face
+
+
+def get_face_img(img_paths):
+    # input a list of paths of images
+    # return
+    #     (1) close-ups of faces
+    #     (2) source
+    #     (3) locations
+    face_closeups = list()
+    face_source = list()
+    face_locations = list()
+
+    with tf.Graph().as_default():
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.25)
+        sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
+        with sess.as_default():
+            pnet, rnet, onet = detect_face.create_mtcnn(sess, None)
+
+        for path in img_paths:
+            img = img_read(path)
+            bounding_boxes, _ = detect_face.detect_face(img, minsize, pnet, rnet, onet, threshold, factor)
+            nrof_faces = bounding_boxes.shape[0]
+
+            if nrof_faces > 0:
+                det = bounding_boxes[:, 0:4]
+                img_size = np.asarray(img.shape)[0:2]
+
+                for det_no in range(nrof_faces):
+                    each_det = np.squeeze(det[det_no])
+                    bb = np.zeros(4, dtype=np.int32)
+                    bb[0] = np.maximum(each_det[0] - args_margin / 2, 0)  # left Bound
+                    bb[1] = np.maximum(each_det[1] - args_margin / 2, 0)  # upper Bound
+                    bb[2] = np.minimum(each_det[2] + args_margin / 2, img_size[1])  # right Bound
+                    bb[3] = np.minimum(each_det[3] + args_margin / 2, img_size[0])  # lower Bound
+                    cropped = img[bb[1]:bb[3], bb[0]:bb[2], :]
+                    scaled = misc.imresize(cropped, (args_image_size, args_image_size), interp='bilinear')
+
+                    face_closeups.append(scaled)
+                    face_source.append(path)
+                    face_locations.append(bb)
+
+    return face_closeups, face_source, face_locations
+
+
+def face_process(face_closeups, do_random_crop, do_random_flip, image_size, do_prewhiten=True):
+    # input a list of faces
+    # return a nd-array of pre-processed faces
+    nrof_samples = len(face_closeups)
+    images = np.zeros((nrof_samples, image_size, image_size, 3))
+    for i in range(nrof_samples):
+        img = face_closeups[i]
+        try:
+            if img.ndim == 2:
+                img = to_rgb(img)
+            if do_prewhiten:
+                img = prewhiten(img)
+            img = crop(img, do_random_crop, image_size)
+            img = flip(img, do_random_flip)
+            images[i, :, :, :] = img
+        except:
+            continue
+    return images
+
+
+def faceDB(db_name, img_path=None, update=False):
+    code_path = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(code_path, db_name)):
+        os.mkdir(os.path.join(code_path, db_name))
+    if update and img_path==None:
+        print('if update flag is true, img_path can not be None')
+        exit()
+    if update or \
+            not os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) or \
+            not os.path.exists(os.path.join(code_path, db_name, 'face_source.npy')) or \
+            not os.path.exists(os.path.join(code_path, db_name, 'face_locations.npy')):
+
+        if os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) and \
+           os.path.exists(os.path.join(code_path, db_name, 'face_source.npy')) and \
+           os.path.exists(os.path.join(code_path, db_name, 'face_locations.npy')):
+            db_face_vectors = np.load(os.path.join(code_path, db_name, 'face_vectors.npy'))
+            db_face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy'))
+            db_face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy'))
+            print('loaded database.')
+        else:
+            db_face_vectors = list()
+            db_face_source = list()
+            db_face_locations = list()
+
+        people_list = os.listdir(img_path)
+
+        print('preparing image paths')
+        image_paths = list()
+        for person in people_list:
+            for image in os.listdir(img_path+'%s/' % person):
+                single_img_path = img_path+'%s/' % (person) + image
+                if single_img_path not in db_face_source:
+                    image_paths += [single_img_path]
+                else:
+                    print('%s already exist' % single_img_path)
+            # image_paths += [img_path+'%s/' % (person) + image for image in os.listdir(img_path+'%s/' % person)]
+
+        if len(image_paths)!=0:
+            print('Number of new images is %d' % len(image_paths))
+            print('loading images')
+            face_closeups, face_source, face_locations = get_face_img(image_paths)
+
+            print('processing images')
+            processed_face_closeups = face_process(face_closeups, False, False, args_image_size)
+
+            print('calculate face vectors')
+            face_vectors = get_face_vec(processed_face_closeups)
+
+            print('update database')
+            if os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) and \
+               os.path.exists(os.path.join(code_path, db_name, 'face_source.npy')) and \
+               os.path.exists(os.path.join(code_path, db_name, 'face_locations.npy')) and \
+               len(face_vectors)!=0:
+                db_face_vectors += face_vectors
+                db_face_source += face_source
+                db_face_locations += face_locations
+
+            np.save(os.path.join(code_path, db_name, 'face_vectors.npy'), db_face_vectors)
+            np.save(os.path.join(code_path, db_name, 'face_source.npy'), db_face_source)
+            np.save(os.path.join(code_path, db_name, 'face_locations.npy'), db_face_locations)
+        else:
+            print("there aren't any new image in the dataset.")
+
+        # show
+        # for count in range(len(face_vectors)):
+        #     misc.imshow(face_closeups[count])
+        #     misc.imshow(misc.imread(face_source[count]))
+        #     bb = face_locations[count]
+        #     misc.imshow(misc.imread(face_source[count])[bb[1]:bb[3], bb[0]:bb[2], :])
+    else:
+        db_face_vectors = np.load(os.path.join(code_path, db_name, 'face_vectors.npy'))
+        db_face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy'))
+        db_face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy'))
+
+    return db_face_vectors, db_face_source, db_face_locations
+
+
+def puttext_in_chinese(img, text, location):
+    # cv2 to pil
+    cv2_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(cv2_img)
+
+    # text
+    draw = ImageDraw.Draw(pil_img)
+    font = ImageFont.truetype("simhei.ttf", 10, encoding="utf-8")
+    draw.text(location, text, (255, 0, 0), font=font)  # third parameter is color
+
+    # pil to cv2
+    cv2_text_im = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    return cv2_text_im
+
+
+def drawBoundaryBox(face_sources, face_locations, person_names, distances):
+    # font style
+    # font = cv2.FONT_HERSHEY_SIMPLEX
+    # fontScale = 0.5
+    # fontColor = (255, 255, 255)
+    # lineType = 2
+
+    imgList = list()
+    face_counter_for_each_image = 0
+    for face_no in range(len(person_names)):
+        source = face_sources[face_no]
+        location = face_locations[face_no]
+        name = person_names[face_no]
+        distance = distances[face_no]
+
+        if type(source) == np.ndarray:
+            img = source
+        else:
+            img = cv2.imread(source)
+
+        # check whether those faces are in the same image or not
+        try:
+            if not np.all(pre_img == img):
+                if face_counter_for_each_image > 0:
+                    imgList.append(marked_img)
+                    pre_img = img
+                    marked_img = img.copy()
+                face_counter_for_each_image = 0
+        except:
+            pre_img = img
+            marked_img = img.copy()
+
+        # draw boundary box
+        cv2.rectangle(marked_img, (location[0], location[1]), (location[2], location[3]), (0, 255, 0), 2)
+        # cv2.putText(img, '%s: %.3f' % (name, distance), (location[0], location[3]), font, fontScale, fontColor, lineType)
+        marked_img = puttext_in_chinese(marked_img, '%s: %.3f' % (name, distance), (location[0], location[3]))
+
+        if face_no == len(person_names)-1:
+            imgList.append(marked_img)
+
+        face_counter_for_each_image += 1
+
+    return imgList

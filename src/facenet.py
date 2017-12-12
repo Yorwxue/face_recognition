@@ -640,6 +640,7 @@ def img_read(image_path):
     except (IOError, ValueError, IndexError) as e:
         errorMessage = '{}: {}'.format(image_path, e)
         print(errorMessage)
+        exit()
     else:
         # make sure that all images are normal
         # ----------------------------------------------
@@ -650,7 +651,7 @@ def img_read(image_path):
             img = to_rgb(image)
             image = image[:, :, 0:3]
         # ----------------------------------------------
-    return image
+        return image
 
 
 def cal_euclidean(x, y):
@@ -728,6 +729,7 @@ def face_process(face_closeups, do_random_crop, do_random_flip, image_size, do_p
 
 
 def faceDB(db_name, img_path=None, update=False):
+    nb_of_database = 0
     code_path = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(os.path.join(code_path, db_name)):
         os.mkdir(os.path.join(code_path, db_name))
@@ -746,6 +748,7 @@ def faceDB(db_name, img_path=None, update=False):
             db_face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy'))
             db_face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy'))
             print('loaded database.')
+            nb_of_database = len(db_face_source)
         else:
             db_face_vectors = list()
             db_face_source = list()
@@ -787,6 +790,7 @@ def faceDB(db_name, img_path=None, update=False):
             np.save(os.path.join(code_path, db_name, 'face_vectors.npy'), db_face_vectors)
             np.save(os.path.join(code_path, db_name, 'face_source.npy'), db_face_source)
             np.save(os.path.join(code_path, db_name, 'face_locations.npy'), db_face_locations)
+            print('Add %d new images to database' % (len(db_face_source) - nb_of_database))
         else:
             print("there aren't any new image in the dataset.")
 

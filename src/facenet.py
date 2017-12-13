@@ -744,9 +744,9 @@ def faceDB(db_name, img_path=None, update=False):
         if os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) and \
            os.path.exists(os.path.join(code_path, db_name, 'face_source.npy')) and \
            os.path.exists(os.path.join(code_path, db_name, 'face_locations.npy')):
-            db_face_vectors = np.load(os.path.join(code_path, db_name, 'face_vectors.npy'))
-            db_face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy'))
-            db_face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy'))
+            db_face_vectors = np.load(os.path.join(code_path, db_name, 'face_vectors.npy')).tolist()
+            db_face_source = np.load(os.path.join(code_path, db_name, 'face_source.npy')).tolist()
+            db_face_locations = np.load(os.path.join(code_path, db_name, 'face_locations.npy')).tolist()
             print('loaded database.')
             nb_of_database = len(db_face_source)
         else:
@@ -776,7 +776,7 @@ def faceDB(db_name, img_path=None, update=False):
             processed_face_closeups = face_process(face_closeups, False, False, args_image_size)
 
             print('calculate face vectors')
-            face_vectors = get_face_vec(processed_face_closeups)
+            face_vectors = get_face_vec(processed_face_closeups).tolist()
 
             print('update database')
             if os.path.exists(os.path.join(code_path, db_name, 'face_vectors.npy')) and \
@@ -786,6 +786,10 @@ def faceDB(db_name, img_path=None, update=False):
                 db_face_vectors += face_vectors
                 db_face_source += face_source
                 db_face_locations += face_locations
+            else:
+                db_face_vectors = face_vectors
+                db_face_source = face_source
+                db_face_locations = face_locations
 
             np.save(os.path.join(code_path, db_name, 'face_vectors.npy'), db_face_vectors)
             np.save(os.path.join(code_path, db_name, 'face_source.npy'), db_face_source)

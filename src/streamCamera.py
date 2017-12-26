@@ -12,6 +12,7 @@ import pickle
 import align.detect_face
 import facenet
 from PIL import Image, ImageDraw, ImageFont
+from face_database import faceDB, realTimeFaceRecognition, drawBoundaryBox
 
 # python3.6 src/streamcamera.py {model_path}
 # ex: python3.6 src/streamCamera.py /media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src/pre_train_models/20170512-110547.pb
@@ -21,7 +22,9 @@ threshold = [0.6, 0.7, 0.7]  # three steps's threshold
 factor = 0.709  # scale factor
 margin = 32
 image_size = 160
-classifier_filename_exp = os.path.expanduser('/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src/pre_train_models/political_classifier.pkl')
+buffer_size = 1
+# classifier_filename_exp = os.path.expanduser('/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/facenet-master/src/pre_train_models/political_classifier.pkl')
+db_name = 'sir_db'
 
 # font style
 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -70,17 +73,29 @@ def main(args):
             embedding_size = embeddings.get_shape()[1]
 
             # load the classify model
-            with open(classifier_filename_exp, 'rb') as infile:
-                (model, class_names) = pickle.load(infile)
+            # with open(classifier_filename_exp, 'rb') as infile:
+            #     (model, class_names) = pickle.load(infile)
+            db = faceDB(db_name)
 
             # -------------------------------------------------------------------------
             cap = cv2.VideoCapture(test_video)
 
+            # frame_buffer = list()
+            # stack = 0
+            marked_frameList = list()
+
             while True:
                 ret, frame = cap.read()
 
-                if not ret:
+                if not ret:  # end of video
+                    # show frame
+                    for marked_frame in marked_frameList:
+                        cv2.imshow("image", marked_frame[0])
+                        cv2.waitKey(1)
                     exit()
+
+                # frame_buffer.append(frame)
+                # stack += 1
 
                 bounding_boxes, _ = align.detect_face.detect_face(frame, minsize, pnet, rnet, onet, threshold, factor)
                 nrof_faces = bounding_boxes.shape[0]
@@ -109,25 +124,36 @@ def main(args):
                         scaled = misc.imresize(cropped, (image_size, image_size), interp='bilinear')
                         images.append(scaled)
 
-                    # face recognition
+                    # face vector
                     feed_dict = {images_placeholder: images, phase_train_placeholder: False}
                     emb_array = sess.run(embeddings, feed_dict=feed_dict)
 
-                    # show result
-                    predictions = model.predict_proba(emb_array)
-                    best_class_indices = np.argmax(predictions, axis=1)
-                    best_class_probabilities = predictions[np.arange(len(best_class_indices)), best_class_indices]
+                    # face recognition
+                    # predictions = model.predict_proba(emb_array)
+                    # best_class_indices = np.argmax(predictions, axis=1)
+                    # best_class_probabilities = predictions[np.arange(len(best_class_indices)), best_class_indices]
+
+                    nameList, distanceList = realTimeFaceRecognition(emb_array, db)
 
                     # mark in image
-                    for i in range(len(best_class_indices)):
-                        person_name = '%s: %.3f' % (class_names[best_class_indices[i]], best_class_probabilities[i])
-                        face = face_location[i]
-                        # cv2.putText(frame, person_name, (face[0], face[3]), font, fontScale, fontColor, lineType)
-                        frame = puttext_in_chinese(frame, person_name, (face[0], face[3]))
+                    # for i in range(len(best_class_indices)):
+                    #     # person_name = '%s: %.3f' % (class_names[best_class_indices[i]], best_class_probabilities[i])
+                    #     face = face_location[i]
+                    #     # cv2.putText(frame, person_name, (face[0], face[3]), font, fontScale, fontColor, lineType)
+                    #     frame = puttext_in_chinese(frame, person_name, (face[0], face[3]))
+                    marked_frame = drawBoundaryBox([frame]*len(emb_array), face_location, nameList, distanceList)
 
+                    marked_frameList.append(marked_frame)
+
+                if len(marked_frameList)>=buffer_size:
                     # show frame
-                    cv2.imshow("image", frame)
-                    cv2.waitKey(1)
+                    for marked_frame in marked_frameList:
+                        cv2.imshow("image", marked_frame[0])
+                        cv2.waitKey(1)
+
+                    del marked_frameList
+
+                    marked_frameList = list()
 
             # When everything done, release the capture
             cap.release()

@@ -73,9 +73,9 @@ def auto_rescale(path, target_dir):
 
 
 if __name__ == '__main__':
-    root_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/SRGAN_dataset/face_image/train_hr'
-    path = root_path + 'all/'
+    root_path = '/media/clliao/9c88dfb2-c12d-48cc-b30b-eaffb0cbf545/SRGAN_dataset/face_image'
+    path = os.path.join(root_path, 'train_hr/')
     print('img path:', path)
-    target_dir = root_path + 'pic_of_person_lr/'
+    target_dir = os.path.join(root_path, 'train_lr/')
     print('target path: ', target_dir)
     auto_rescale(path, target_dir)
